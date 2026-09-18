@@ -1,8 +1,16 @@
-import { LanguageModel } from "ai";
-import { AiConfig, ModelSpec } from "../../config/config.types.js";
+import type { LanguageModel } from "ai";
+import type { AiConfig, ModelSpec } from "../../config/config.types.js";
 import { AppError } from "../../platform/errors/app-error.js";
-import { LlmRegistry } from "./provider-registry.js";
+import { REGISTRY_SEPARATOR, type LlmRegistry } from "./provider-registry.js";
 
+export interface ResolvedModel {
+  readonly alias: string;
+  readonly providerId: string;
+  readonly spec: ModelSpec;
+  readonly model: LanguageModel;
+}
+
+/** Everything the client is allowed to learn about a model. Never a model id. */
 export interface PublicModelInfo {
   readonly alias: string;
   readonly label: string;
@@ -10,90 +18,69 @@ export interface PublicModelInfo {
   readonly description?: string;
 }
 
-export interface ResolvedModel {
-  readonly model: LanguageModel;
-  readonly spec: ModelSpec;
-}
-
 export interface ModelResolver {
+  /** `undefined` resolves the configured default alias. */
   resolve(alias?: string): ResolvedModel;
   listSelectable(): readonly PublicModelInfo[];
 }
 
-export class DefaultModelResolver implements ModelResolver {
-  constructor(
-    private readonly registry: LlmRegistry,
-    private readonly config: AiConfig
-  ) {}
+const UNAVAILABLE_MESSAGE = "The requested model is not available.";
 
-  resolve(alias?: string): ResolvedModel {
-    const chosenAlias = alias || this.config.defaultAlias;
+export function createModelResolver(ai: AiConfig, registry: LlmRegistry): ModelResolver {
+  function resolve(alias?: string): ResolvedModel {
+    const requested = alias ?? ai.defaultAlias;
+    const spec = ai.modelAliases[requested];
 
-    if (!this.config.clientSelectableAliases.includes(chosenAlias)) {
+    if (spec === undefined) {
       throw new AppError("MODEL_UNAVAILABLE", {
-        status: 422,
-        publicMessage: `Model alias "${chosenAlias}" is not selectable or allowed.`,
-        meta: { alias: chosenAlias },
+        publicMessage: UNAVAILABLE_MESSAGE,
+        meta: { alias: requested, reason: "unknown_alias" },
       });
     }
 
-    const spec = this.config.modelAliases[chosenAlias];
-    if (!spec) {
+    if (registry.providers[spec.provider] === undefined) {
       throw new AppError("MODEL_UNAVAILABLE", {
-        status: 422,
-        publicMessage: `Unknown model alias "${chosenAlias}".`,
-        meta: { alias: chosenAlias },
+        publicMessage: UNAVAILABLE_MESSAGE,
+        meta: { alias: requested, reason: "provider_not_registered" },
       });
     }
 
-    // Check if provider credentials exist (unless mock)
-    if (spec.provider !== "mock" && !this.config.providers[spec.provider]?.apiKey) {
-      // If requested provider has no key, fallback to mock if available
-      const mockSpec: ModelSpec = {
-        provider: "mock",
-        model: "mock-model",
-        label: `${spec.label} (Mock Mode)`,
-        description: "Provider key not set, operating in mock mode",
-      };
-      try {
-        const mockModel = this.registry.languageModel("mock:mock-model");
-        return { model: mockModel, spec: mockSpec };
-      } catch {
-        throw new AppError("MODEL_UNAVAILABLE", {
-          status: 503,
-          publicMessage: `Provider "${spec.provider}" is not configured and mock fallback failed.`,
-          meta: { provider: spec.provider },
-        });
-      }
-    }
+    const modelRef: `${string}${typeof REGISTRY_SEPARATOR}${string}` = `${spec.provider}${REGISTRY_SEPARATOR}${spec.model}`;
 
-    const modelRef: `${string}:${string}` = `${spec.provider}:${spec.model}`;
     try {
-      const model = this.registry.languageModel(modelRef);
-      return { model, spec };
-    } catch (err: Error | unknown) {
-      const e = err instanceof Error ? err : new Error(String(err));
-      throw new AppError("MODEL_UNAVAILABLE", {
-        status: 503,
-        publicMessage: `Failed to resolve model ${modelRef}: ${e.message}`,
-        meta: { modelRef },
+      return {
+        alias: requested,
+        providerId: spec.provider,
+        spec,
+        model: registry.registry.languageModel(modelRef),
+      };
+    } catch (error) {
+      // Never substitute a different model: a silent swap makes answers
+      // unattributable and hides a broken deployment.
+      throw AppError.from(error, {
+        code: "MODEL_UNAVAILABLE",
+        publicMessage: UNAVAILABLE_MESSAGE,
+        meta: { alias: requested, reason: "registry_rejected" },
       });
     }
   }
 
-  listSelectable(): readonly PublicModelInfo[] {
-    const results: PublicModelInfo[] = [];
-    for (const alias of this.config.clientSelectableAliases) {
-      const spec = this.config.modelAliases[alias];
-      if (spec) {
-        results.push({
-          alias,
-          label: spec.label,
-          providerId: spec.provider,
-          description: spec.description,
-        });
-      }
+  function listSelectable(): readonly PublicModelInfo[] {
+    const infos: PublicModelInfo[] = [];
+
+    for (const alias of ai.clientSelectableAliases) {
+      const spec = ai.modelAliases[alias];
+      if (spec === undefined) continue;
+      infos.push({
+        alias,
+        label: spec.label,
+        providerId: spec.provider,
+        description: spec.description,
+      });
     }
-    return results;
+
+    return infos;
   }
+
+  return { resolve, listSelectable };
 }

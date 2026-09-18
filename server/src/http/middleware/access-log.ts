@@ -1,19 +1,38 @@
-import { NextFunction, Request, Response } from "express";
-import { Logger } from "../../platform/logging/logger.port.js";
+import type { RequestHandler } from "express";
+import type { Clock } from "../../platform/clock.js";
+import type { Logger } from "../../platform/logging/logger.port.js";
 
-export function createAccessLogMiddleware(logger?: Logger) {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    const start = Date.now();
-    res.on("finish", () => {
-      const durationMs = Date.now() - start;
-      logger?.info("HTTP Request", {
-        requestId: req.id,
+export interface AccessLogDeps {
+  readonly logger: Logger;
+  readonly clock: Clock;
+}
+
+/**
+ * One structured line per request. `close` is watched as well as `finish`
+ * because a cancelled stream never finishes, and an access log that silently
+ * omits abandoned requests hides exactly the traffic worth looking at.
+ */
+export function createAccessLog(deps: AccessLogDeps): RequestHandler {
+  return (req, res, next): void => {
+    const startedAtMs = deps.clock.timestampMs();
+    let logged = false;
+
+    const write = (completed: boolean): void => {
+      if (logged) return;
+      logged = true;
+      deps.logger.info("http_request", {
+        requestId: req.requestId,
         method: req.method,
-        path: req.originalUrl || req.url,
+        path: req.originalUrl,
         status: res.statusCode,
-        durationMs,
+        durationMs: deps.clock.timestampMs() - startedAtMs,
+        completed,
       });
-    });
+    };
+
+    res.on("finish", () => write(true));
+    res.on("close", () => write(res.writableEnded));
+
     next();
   };
 }

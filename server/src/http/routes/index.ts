@@ -1,75 +1,31 @@
 import { Router } from "express";
-import { ModelResolver } from "../../ai/provider/model-resolver.js";
-import { AppConfig } from "../../config/config.types.js";
-import { CachePort } from "../../platform/cache/cache.port.js";
-import { Clock } from "../../platform/clock.js";
-import { Logger } from "../../platform/logging/logger.port.js";
-import { Metrics } from "../../platform/metrics/metrics.port.js";
-import { WeatherService } from "../../weather/weather.service.types.js";
+import type { Container } from "../../container.js";
 import { createRateLimiters } from "../middleware/rate-limit.js";
 import { createCapabilitiesRouter } from "./capabilities.route.js";
 import { createChatRouter } from "./chat.route.js";
-import { createGeocodeRouter } from "./geocode.route.js";
 import { createHealthRouter } from "./health.route.js";
-import { createWeatherRouter } from "./weather.route.js";
 
-export interface AppRouterDeps {
-  readonly config: AppConfig;
-  readonly weatherService: WeatherService;
-  readonly modelResolver: ModelResolver;
-  readonly cache: CachePort;
-  readonly clock: Clock;
-  readonly logger?: Logger;
-  readonly metrics?: Metrics;
+export interface RouterDeps {
+  readonly container: Container;
 }
 
-export function createAppRouter(deps: AppRouterDeps): Router {
+/**
+ * The whole route tree.
+ *
+ * The API lives under `config.http.basePath`; the health probes stay at the root
+ * because an orchestrator's probe path must not move when the API's does.
+ */
+export function createRouter(deps: RouterDeps): Router {
   const router = Router();
-  const rateLimiters = createRateLimiters(deps.config.rateLimit);
+  const limiters = createRateLimiters(deps.container.config.rateLimit);
 
-  // Health routes
-  const healthRouter = createHealthRouter({ weatherService: deps.weatherService });
-  router.use(healthRouter);
+  router.use(createHealthRouter({ container: deps.container }));
 
-  // API router
-  const apiRouter = Router();
+  const api = Router();
+  api.use(createChatRouter({ container: deps.container, rateLimiters: limiters.chat }));
+  api.use(createCapabilitiesRouter({ container: deps.container, rateLimiters: limiters.read }));
 
-  apiRouter.use(
-    createChatRouter({
-      weatherService: deps.weatherService,
-      modelResolver: deps.modelResolver,
-      aiConfig: deps.config.ai,
-      cache: deps.cache,
-      clock: deps.clock,
-      logger: deps.logger,
-      metrics: deps.metrics,
-      rateLimiter: rateLimiters.chatRateLimiter,
-    })
-  );
-
-  apiRouter.use(
-    createWeatherRouter({
-      weatherService: deps.weatherService,
-      rateLimiter: rateLimiters.readRateLimiter,
-    })
-  );
-
-  apiRouter.use(
-    createGeocodeRouter({
-      weatherService: deps.weatherService,
-      rateLimiter: rateLimiters.readRateLimiter,
-    })
-  );
-
-  apiRouter.use(
-    createCapabilitiesRouter({
-      modelResolver: deps.modelResolver,
-      weatherService: deps.weatherService,
-      config: deps.config,
-    })
-  );
-
-  router.use(deps.config.http.basePath, apiRouter);
+  router.use(deps.container.config.http.basePath, api);
 
   return router;
 }
