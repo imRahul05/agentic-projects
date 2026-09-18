@@ -1,7 +1,6 @@
 export type Environment = "development" | "test" | "production";
-export type UnitSystem = "metric" | "imperial";
-export type WeatherCapability = "geocode" | "current" | "forecast" | "alerts" | "history";
 export type LogLevel = "debug" | "info" | "warn" | "error";
+export type SearchMode = "native" | "external";
 
 export interface HttpConfig {
   readonly port: number;
@@ -17,6 +16,11 @@ export interface ProviderCredentials {
   readonly baseURL?: string;
 }
 
+/**
+ * A model alias entry. `provider` must match a key in {@link AiConfig.providers};
+ * `model` is the provider-native model id. Both come from configuration so that
+ * no model or provider name is ever hardcoded in application code.
+ */
 export interface ModelSpec {
   readonly provider: string;
   readonly model: string;
@@ -26,6 +30,7 @@ export interface ModelSpec {
 
 export interface AgentConfig {
   readonly maxSteps: number;
+  readonly maxSearches: number;
   readonly totalTimeoutMs: number;
   readonly stepTimeoutMs: number;
   readonly maxOutputTokens: number;
@@ -41,33 +46,44 @@ export interface AiConfig {
   readonly agent: AgentConfig;
 }
 
-export interface WeatherProviderEndpointConfig {
-  readonly baseUrl: string;
-  readonly geocodingBaseUrl?: string;
-  readonly apiKey?: string;
+export interface SearchUserLocation {
+  readonly country?: string;
+  readonly region?: string;
+  readonly city?: string;
+  readonly timezone?: string;
+}
+
+/**
+ * Provider-executed web search. Tool ids are configured rather than hardcoded
+ * because providers ship dated tool versions (e.g. Anthropic's
+ * `webSearch_<date>`), so upgrading is an environment change.
+ */
+export interface NativeSearchConfig {
+  readonly toolIdByProvider: Readonly<Record<string, string>>;
+  readonly maxUses?: number;
+  readonly allowedDomains?: readonly string[];
+  readonly blockedDomains?: readonly string[];
+  readonly userLocation?: SearchUserLocation;
+}
+
+export interface ExternalSearchConfig {
+  readonly clientId: string;
+  readonly apiKey: string;
+  readonly baseUrl?: string;
+  readonly maxResults: number;
   readonly timeoutMs: number;
-  readonly retries: number;
+  readonly cacheTtlMs: number;
 }
 
-export interface WeatherDefaultsConfig {
-  readonly units: UnitSystem;
-  readonly forecastDays: number;
-  readonly maxForecastDays: number;
-  readonly geocodeLimit: number;
-  readonly locale: string;
-}
-
-export interface WeatherConfig {
-  readonly defaultProviderId: string;
-  readonly fallbackProviderIds: readonly string[];
-  readonly providers: Readonly<Record<string, WeatherProviderEndpointConfig>>;
-  readonly defaults: WeatherDefaultsConfig;
+export interface SearchConfig {
+  readonly mode: SearchMode;
+  readonly native: NativeSearchConfig;
+  readonly external?: ExternalSearchConfig;
 }
 
 export interface CacheConfig {
   readonly enabled: boolean;
   readonly maxEntries: number;
-  readonly ttlMs: Readonly<Record<WeatherCapability, number>>;
 }
 
 export interface RateLimitBucketConfig {
@@ -86,13 +102,20 @@ export interface ObservabilityConfig {
   readonly serviceName: string;
 }
 
+export interface ChatUiConfig {
+  /** Empty-state prompt chips, served to the client so the UI hardcodes nothing. */
+  readonly suggestions: readonly string[];
+  readonly defaultLocale: string;
+}
+
 export interface AppConfig {
   readonly env: Environment;
   readonly http: HttpConfig;
   readonly ai: AiConfig;
-  readonly weather: WeatherConfig;
+  readonly search: SearchConfig;
   readonly cache: CacheConfig;
   readonly rateLimit: RateLimitConfig;
   readonly observability: ObservabilityConfig;
+  readonly chat: ChatUiConfig;
   readonly features: Readonly<Record<string, boolean>>;
 }

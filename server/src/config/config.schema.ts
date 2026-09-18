@@ -1,281 +1,298 @@
 import { z } from "zod";
-import { AppConfig, ModelSpec, WeatherCapability } from "./config.types.js";
+import type { AppConfig, ModelSpec, SearchUserLocation } from "./config.types.js";
 
-const DEFAULT_MODEL_ALIASES: Readonly<Record<string, ModelSpec>> = {
-  default: {
-    provider: "openai",
-    model: "gpt-4o-mini",
-    label: "GPT-4o Mini (Default)",
-    description: "Fast, accurate and cost-effective",
-  },
-  fast: {
-    provider: "openai",
-    model: "gpt-4o-mini",
-    label: "Fast",
-    description: "Lowest latency response",
-  },
-  reasoning: {
-    provider: "openai",
-    model: "gpt-4o",
-    label: "GPT-4o (High Intelligence)",
-    description: "Deep reasoning and detailed comparisons",
-  },
-};
+/**
+ * Environment variables arrive as strings. These helpers keep the schema
+ * declarative while still failing fast on malformed input — a misconfigured
+ * deployment must refuse to boot rather than silently fall back to a default.
+ */
+const integerFromString = (
+  defaultValue: number,
+  bounds: { readonly min: number; readonly max?: number },
+): z.ZodType<number, z.ZodTypeDef, unknown> =>
+  z
+    .union([z.string(), z.number()])
+    .default(String(defaultValue))
+    .transform((value, ctx): number => {
+      const parsed = typeof value === "number" ? value : Number.parseInt(value.trim(), 10);
+      if (!Number.isInteger(parsed)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `expected an integer, received "${String(value)}"` });
+        return z.NEVER;
+      }
+      if (parsed < bounds.min || (bounds.max !== undefined && parsed > bounds.max)) {
+        const range = bounds.max === undefined ? `>= ${bounds.min}` : `between ${bounds.min} and ${bounds.max}`;
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `expected an integer ${range}, received ${parsed}` });
+        return z.NEVER;
+      }
+      return parsed;
+    });
 
-export const rawEnvSchema = z.object({
-  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  PORT: z
-    .string()
-    .default("8080")
-    .refine((val: string): boolean => {
-      const parsed = parseInt(val, 10);
-      return !Number.isNaN(parsed) && parsed > 0 && parsed <= 65535;
-    }, { message: "Invalid PORT" })
-    .transform((val: string): number => parseInt(val, 10)),
-  API_BASE_PATH: z.string().default(""),
-  CORS_ORIGINS: z
-    .string()
-    .default("http://localhost:3000")
-    .transform((val: string): readonly string[] =>
-      val.split(",").map((s: string): string => s.trim()).filter((s: string): boolean => s.length > 0)
-    ),
-  TRUST_PROXY: z
-    .string()
-    .default("false")
-    .transform((val: string): boolean | number => {
-      if (val === "true") return true;
-      if (val === "false") return false;
-      const num = parseInt(val, 10);
-      return Number.isNaN(num) ? false : num;
-    }),
-  BODY_LIMIT_BYTES: z
-    .string()
-    .default("1048576")
-    .transform((val: string): number => parseInt(val, 10)),
-  REQUEST_TIMEOUT_MS: z
-    .string()
-    .default("30000")
-    .transform((val: string): number => parseInt(val, 10)),
+const booleanFromString = (defaultValue: boolean): z.ZodType<boolean, z.ZodTypeDef, unknown> =>
+  z
+    .union([z.string(), z.boolean()])
+    .default(String(defaultValue))
+    .transform((value, ctx): boolean => {
+      if (typeof value === "boolean") return value;
+      const normalized = value.trim().toLowerCase();
+      if (["true", "1", "yes", "on"].includes(normalized)) return true;
+      if (["false", "0", "no", "off", ""].includes(normalized)) return false;
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: `expected a boolean, received "${value}"` });
+      return z.NEVER;
+    });
 
-  // AI Providers
-  OPENAI_API_KEY: z.string().optional().default(""),
-  OPENAI_BASE_URL: z.string().optional(),
-  ANTHROPIC_API_KEY: z.string().optional().default(""),
-  ANTHROPIC_BASE_URL: z.string().optional(),
+const csvList = (defaultValue: string): z.ZodType<readonly string[], z.ZodTypeDef, unknown> =>
+  z
+    .string()
+    .default(defaultValue)
+    .transform((value): readonly string[] =>
+      value
+        .split(",")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
+    );
 
-  // Model selection
-  AI_MODEL_ALIASES: z
+const jsonObject = <T>(schema: z.ZodType<T>, label: string): z.ZodType<T | undefined, z.ZodTypeDef, unknown> =>
+  z
     .string()
     .optional()
-    .refine((val?: string): boolean => {
-      if (!val) return true;
+    .transform((value, ctx): T | undefined => {
+      if (value === undefined || value.trim() === "") return undefined;
+      let raw: unknown;
       try {
-        JSON.parse(val);
-        return true;
+        raw = JSON.parse(value);
       } catch {
-        return false;
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${label} must be valid JSON` });
+        return z.NEVER;
       }
-    }, { message: "AI_MODEL_ALIASES must be valid JSON" })
-    .transform((val?: string): Record<string, ModelSpec> => {
-      if (!val) return { ...DEFAULT_MODEL_ALIASES };
-      const parsed = JSON.parse(val) as Record<string, ModelSpec>;
-      return { ...DEFAULT_MODEL_ALIASES, ...parsed };
-    }),
-  AI_DEFAULT_MODEL_ALIAS: z.string().default("default"),
-  AI_CLIENT_SELECTABLE_ALIASES: z
-    .string()
-    .default("default,fast,reasoning")
-    .transform((val: string): readonly string[] =>
-      val.split(",").map((s: string): string => s.trim()).filter((s: string): boolean => s.length > 0)
-    ),
+      const result = schema.safeParse(raw);
+      if (!result.success) {
+        const detail = result.error.issues
+          .map((issue) => `${issue.path.join(".") || "<root>"}: ${issue.message}`)
+          .join("; ");
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `${label} is invalid (${detail})` });
+        return z.NEVER;
+      }
+      return result.data;
+    });
+
+const modelSpecSchema: z.ZodType<ModelSpec> = z.object({
+  provider: z.string().min(1),
+  model: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().optional(),
+});
+
+const userLocationSchema: z.ZodType<SearchUserLocation> = z.object({
+  country: z.string().optional(),
+  region: z.string().optional(),
+  city: z.string().optional(),
+  timezone: z.string().optional(),
+});
+
+const trustProxySchema: z.ZodType<boolean | number, z.ZodTypeDef, unknown> = z
+  .string()
+  .default("false")
+  .transform((value, ctx): boolean | number => {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "off", ""].includes(normalized)) return false;
+    const hops = Number.parseInt(normalized, 10);
+    if (Number.isInteger(hops) && hops >= 0) return hops;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `TRUST_PROXY must be a boolean or a non-negative hop count, received "${value}"`,
+    });
+    return z.NEVER;
+  });
+
+const baseEnvSchema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+
+  // HTTP
+  PORT: integerFromString(8080, { min: 1, max: 65535 }),
+  API_BASE_PATH: z.string().default("/api"),
+  CORS_ORIGINS: csvList("http://localhost:3000"),
+  TRUST_PROXY: trustProxySchema,
+  BODY_LIMIT_BYTES: integerFromString(262144, { min: 1024 }),
+  REQUEST_TIMEOUT_MS: integerFromString(60000, { min: 1000 }),
+
+  // Model providers
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_BASE_URL: z.string().url().optional(),
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_BASE_URL: z.string().url().optional(),
+
+  /**
+   * Required. Maps an alias the client may request to a concrete provider+model.
+   * Deliberately has no built-in default so that model ids live only in config.
+   */
+  AI_MODEL_ALIASES: jsonObject(z.record(modelSpecSchema), "AI_MODEL_ALIASES"),
+  AI_DEFAULT_MODEL_ALIAS: z.string().min(1).default("default"),
+  AI_CLIENT_SELECTABLE_ALIASES: csvList(""),
 
   // Agent budgets
-  AGENT_MAX_STEPS: z
-    .string()
-    .default("6")
-    .transform((val: string): number => parseInt(val, 10)),
-  AGENT_TOTAL_TIMEOUT_MS: z
-    .string()
-    .default("25000")
-    .transform((val: string): number => parseInt(val, 10)),
-  AGENT_STEP_TIMEOUT_MS: z
-    .string()
-    .default("10000")
-    .transform((val: string): number => parseInt(val, 10)),
-  AGENT_MAX_OUTPUT_TOKENS: z
-    .string()
-    .default("2048")
-    .transform((val: string): number => parseInt(val, 10)),
-  AGENT_HISTORY_WINDOW: z
-    .string()
-    .default("10")
-    .transform((val: string): number => parseInt(val, 10)),
-  AGENT_MAX_INPUT_CHARS: z
-    .string()
-    .default("4000")
-    .transform((val: string): number => parseInt(val, 10)),
+  AGENT_MAX_STEPS: integerFromString(5, { min: 1, max: 50 }),
+  AGENT_MAX_SEARCHES: integerFromString(3, { min: 1, max: 20 }),
+  AGENT_TOTAL_TIMEOUT_MS: integerFromString(60000, { min: 1000 }),
+  AGENT_STEP_TIMEOUT_MS: integerFromString(30000, { min: 1000 }),
+  AGENT_MAX_OUTPUT_TOKENS: integerFromString(1024, { min: 64 }),
+  AGENT_HISTORY_WINDOW: integerFromString(10, { min: 1, max: 200 }),
+  AGENT_MAX_INPUT_CHARS: integerFromString(4000, { min: 100 }),
 
-  // Weather Providers
-  WEATHER_PROVIDER: z.string().default("open-meteo"),
-  WEATHER_FALLBACK_PROVIDERS: z
-    .string()
-    .default("mock")
-    .transform((val: string): readonly string[] =>
-      val.split(",").map((s: string): string => s.trim()).filter((s: string): boolean => s.length > 0)
-    ),
-  WEATHER_OPEN_METEO_BASE_URL: z.string().default("https://api.open-meteo.com/v1"),
-  WEATHER_OPEN_METEO_GEOCODING_BASE_URL: z
-    .string()
-    .default("https://geocoding-api.open-meteo.com/v1"),
-  WEATHER_OPEN_METEO_TIMEOUT_MS: z
-    .string()
-    .default("7000")
-    .transform((val: string): number => parseInt(val, 10)),
-  WEATHER_WEATHERAPI_BASE_URL: z.string().default("https://api.weatherapi.com/v1"),
-  WEATHER_API_KEY: z.string().optional().default(""),
-  WEATHER_WEATHERAPI_TIMEOUT_MS: z
-    .string()
-    .default("7000")
-    .transform((val: string): number => parseInt(val, 10)),
-
-  // Weather Defaults
-  WEATHER_DEFAULT_UNITS: z.enum(["metric", "imperial"]).default("metric"),
-  WEATHER_DEFAULT_FORECAST_DAYS: z
-    .string()
-    .default("5")
-    .transform((val: string): number => parseInt(val, 10)),
-  WEATHER_MAX_FORECAST_DAYS: z
-    .string()
-    .default("7")
-    .transform((val: string): number => parseInt(val, 10)),
-  WEATHER_GEOCODE_LIMIT: z
-    .string()
-    .default("5")
-    .transform((val: string): number => parseInt(val, 10)),
-  WEATHER_LOCALE: z.string().default("en-US"),
+  // Search
+  SEARCH_MODE: z.enum(["native", "external"]).default("native"),
+  SEARCH_NATIVE_TOOL_IDS: jsonObject(z.record(z.string().min(1)), "SEARCH_NATIVE_TOOL_IDS"),
+  SEARCH_MAX_USES: integerFromString(3, { min: 1, max: 20 }),
+  SEARCH_ALLOWED_DOMAINS: csvList(""),
+  SEARCH_BLOCKED_DOMAINS: csvList(""),
+  SEARCH_USER_LOCATION: jsonObject(userLocationSchema, "SEARCH_USER_LOCATION"),
+  SEARCH_CLIENT: z.string().default("fake"),
+  SEARCH_API_KEY: z.string().optional(),
+  SEARCH_BASE_URL: z.string().url().optional(),
+  SEARCH_MAX_RESULTS: integerFromString(5, { min: 1, max: 20 }),
+  SEARCH_TIMEOUT_MS: integerFromString(10000, { min: 500 }),
+  SEARCH_CACHE_TTL_MS: integerFromString(300000, { min: 0 }),
 
   // Cache
-  CACHE_ENABLED: z
-    .string()
-    .default("true")
-    .transform((val: string): boolean => val !== "false"),
-  CACHE_MAX_ENTRIES: z
-    .string()
-    .default("500")
-    .transform((val: string): number => parseInt(val, 10)),
-  CACHE_TTL_GEOCODE_MS: z
-    .string()
-    .default("86400000")
-    .transform((val: string): number => parseInt(val, 10)),
-  CACHE_TTL_CURRENT_MS: z
-    .string()
-    .default("600000")
-    .transform((val: string): number => parseInt(val, 10)),
-  CACHE_TTL_FORECAST_MS: z
-    .string()
-    .default("1800000")
-    .transform((val: string): number => parseInt(val, 10)),
-  CACHE_TTL_ALERTS_MS: z
-    .string()
-    .default("300000")
-    .transform((val: string): number => parseInt(val, 10)),
-  CACHE_TTL_HISTORY_MS: z
-    .string()
-    .default("86400000")
-    .transform((val: string): number => parseInt(val, 10)),
+  CACHE_ENABLED: booleanFromString(true),
+  CACHE_MAX_ENTRIES: integerFromString(500, { min: 1 }),
 
-  // Rate Limits
-  RATE_LIMIT_CHAT_WINDOW_MS: z
-    .string()
-    .default("60000")
-    .transform((val: string): number => parseInt(val, 10)),
-  RATE_LIMIT_CHAT_MAX: z
-    .string()
-    .default("30")
-    .transform((val: string): number => parseInt(val, 10)),
-  RATE_LIMIT_READ_WINDOW_MS: z
-    .string()
-    .default("60000")
-    .transform((val: string): number => parseInt(val, 10)),
-  RATE_LIMIT_READ_MAX: z
-    .string()
-    .default("100")
-    .transform((val: string): number => parseInt(val, 10)),
+  // Rate limits
+  RATE_LIMIT_CHAT_WINDOW_MS: integerFromString(60000, { min: 1000 }),
+  RATE_LIMIT_CHAT_MAX: integerFromString(20, { min: 1 }),
+  RATE_LIMIT_READ_WINDOW_MS: integerFromString(60000, { min: 1000 }),
+  RATE_LIMIT_READ_MAX: integerFromString(120, { min: 1 }),
 
   // Observability
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
-  TELEMETRY_ENABLED: z
-    .string()
-    .default("false")
-    .transform((val: string): boolean => val === "true"),
-  SERVICE_NAME: z.string().default("weather-ai-agent"),
+  TELEMETRY_ENABLED: booleanFromString(false),
+  SERVICE_NAME: z.string().min(1).default("weather-agent"),
 
-  // Feature Flags
-  FEATURE_FLAGS: z
+  // Chat UI
+  CHAT_SUGGESTIONS: z
     .string()
-    .optional()
-    .transform((val?: string): Record<string, boolean> => {
-      if (!val) return {};
-      try {
-        return JSON.parse(val) as Record<string, boolean>;
-      } catch {
-        return {};
+    .default("What's the weather in Lisbon right now?|Will it rain in Tokyo tomorrow?|Do I need a jacket in Berlin today?")
+    .transform((value): readonly string[] =>
+      value
+        .split("|")
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
+    ),
+  CHAT_DEFAULT_LOCALE: z.string().min(2).default("en-US"),
+
+  FEATURE_FLAGS: jsonObject(z.record(z.boolean()), "FEATURE_FLAGS"),
+});
+
+/**
+ * Cross-field rules that a per-field schema cannot express. Every violation is
+ * reported so a bad deployment learns about all of its problems at once.
+ */
+export const rawEnvSchema = baseEnvSchema.superRefine((raw, ctx) => {
+  const configuredProviders = new Set<string>();
+  if (raw.OPENAI_API_KEY) configuredProviders.add("openai");
+  if (raw.ANTHROPIC_API_KEY) configuredProviders.add("anthropic");
+
+  if (configuredProviders.size === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["OPENAI_API_KEY"],
+      message: "at least one model provider key is required (OPENAI_API_KEY or ANTHROPIC_API_KEY)",
+    });
+  }
+
+  const aliases = raw.AI_MODEL_ALIASES;
+  if (aliases === undefined || Object.keys(aliases).length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["AI_MODEL_ALIASES"],
+      message:
+        'is required, e.g. {"default":{"provider":"openai","model":"<model-id>","label":"Default"}} — model ids are never hardcoded in code',
+    });
+    return;
+  }
+
+  if (!(raw.AI_DEFAULT_MODEL_ALIAS in aliases)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["AI_DEFAULT_MODEL_ALIAS"],
+      message: `"${raw.AI_DEFAULT_MODEL_ALIAS}" is not defined in AI_MODEL_ALIASES (defined: ${Object.keys(aliases).join(", ")})`,
+    });
+  }
+
+  for (const [alias, spec] of Object.entries(aliases)) {
+    if (!configuredProviders.has(spec.provider)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AI_MODEL_ALIASES", alias, "provider"],
+        message: `provider "${spec.provider}" has no configured credentials`,
+      });
+    }
+  }
+
+  for (const alias of raw.AI_CLIENT_SELECTABLE_ALIASES) {
+    if (!(alias in aliases)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["AI_CLIENT_SELECTABLE_ALIASES"],
+        message: `"${alias}" is not defined in AI_MODEL_ALIASES`,
+      });
+    }
+  }
+
+  if (raw.SEARCH_MODE === "native") {
+    const toolIds = raw.SEARCH_NATIVE_TOOL_IDS ?? {};
+    for (const provider of configuredProviders) {
+      if (!toolIds[provider]) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["SEARCH_NATIVE_TOOL_IDS"],
+          message: `missing native web-search tool id for configured provider "${provider}" (SEARCH_MODE=native)`,
+        });
       }
-    }),
+    }
+  }
+
+  if (raw.SEARCH_MODE === "external" && !raw.SEARCH_API_KEY) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["SEARCH_API_KEY"],
+      message: "is required when SEARCH_MODE=external",
+    });
+  }
+
+  if (raw.AGENT_STEP_TIMEOUT_MS > raw.AGENT_TOTAL_TIMEOUT_MS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["AGENT_STEP_TIMEOUT_MS"],
+      message: "must not exceed AGENT_TOTAL_TIMEOUT_MS",
+    });
+  }
+
+  if (raw.REQUEST_TIMEOUT_MS < raw.AGENT_TOTAL_TIMEOUT_MS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["REQUEST_TIMEOUT_MS"],
+      message: "must be >= AGENT_TOTAL_TIMEOUT_MS, otherwise streams are cut off mid-answer",
+    });
+  }
 });
 
 export type RawEnv = z.infer<typeof rawEnvSchema>;
 
 export function mapRawEnvToAppConfig(raw: RawEnv): AppConfig {
-  const providers: Record<string, { apiKey?: string; baseURL?: string }> = {};
+  const providers: Record<string, { apiKey: string; baseURL?: string }> = {};
   if (raw.OPENAI_API_KEY) {
-    providers.openai = {
-      apiKey: raw.OPENAI_API_KEY,
-      baseURL: raw.OPENAI_BASE_URL,
-    };
+    providers.openai = { apiKey: raw.OPENAI_API_KEY, baseURL: raw.OPENAI_BASE_URL };
   }
   if (raw.ANTHROPIC_API_KEY) {
-    providers.anthropic = {
-      apiKey: raw.ANTHROPIC_API_KEY,
-      baseURL: raw.ANTHROPIC_BASE_URL,
-    };
+    providers.anthropic = { apiKey: raw.ANTHROPIC_API_KEY, baseURL: raw.ANTHROPIC_BASE_URL };
   }
-  // mock provider is always available for testing
-  providers.mock = {};
 
-  const weatherProviders: Record<string, {
-    baseUrl: string;
-    geocodingBaseUrl?: string;
-    apiKey?: string;
-    timeoutMs: number;
-    retries: number;
-  }> = {
-    "open-meteo": {
-      baseUrl: raw.WEATHER_OPEN_METEO_BASE_URL,
-      geocodingBaseUrl: raw.WEATHER_OPEN_METEO_GEOCODING_BASE_URL,
-      timeoutMs: raw.WEATHER_OPEN_METEO_TIMEOUT_MS,
-      retries: 2,
-    },
-    weatherapi: {
-      baseUrl: raw.WEATHER_WEATHERAPI_BASE_URL,
-      apiKey: raw.WEATHER_API_KEY || undefined,
-      timeoutMs: raw.WEATHER_WEATHERAPI_TIMEOUT_MS,
-      retries: 2,
-    },
-    mock: {
-      baseUrl: "mock://weather",
-      timeoutMs: 100,
-      retries: 0,
-    },
-  };
-
-  const ttlMs: Record<WeatherCapability, number> = {
-    geocode: raw.CACHE_TTL_GEOCODE_MS,
-    current: raw.CACHE_TTL_CURRENT_MS,
-    forecast: raw.CACHE_TTL_FORECAST_MS,
-    alerts: raw.CACHE_TTL_ALERTS_MS,
-    history: raw.CACHE_TTL_HISTORY_MS,
-  };
+  const modelAliases = raw.AI_MODEL_ALIASES ?? {};
+  const selectableAliases =
+    raw.AI_CLIENT_SELECTABLE_ALIASES.length > 0
+      ? raw.AI_CLIENT_SELECTABLE_ALIASES
+      : Object.keys(modelAliases);
 
   return {
     env: raw.NODE_ENV,
@@ -289,11 +306,12 @@ export function mapRawEnvToAppConfig(raw: RawEnv): AppConfig {
     },
     ai: {
       providers,
-      modelAliases: raw.AI_MODEL_ALIASES || DEFAULT_MODEL_ALIASES,
+      modelAliases,
       defaultAlias: raw.AI_DEFAULT_MODEL_ALIAS,
-      clientSelectableAliases: raw.AI_CLIENT_SELECTABLE_ALIASES,
+      clientSelectableAliases: selectableAliases,
       agent: {
         maxSteps: raw.AGENT_MAX_STEPS,
+        maxSearches: raw.AGENT_MAX_SEARCHES,
         totalTimeoutMs: raw.AGENT_TOTAL_TIMEOUT_MS,
         stepTimeoutMs: raw.AGENT_STEP_TIMEOUT_MS,
         maxOutputTokens: raw.AGENT_MAX_OUTPUT_TOKENS,
@@ -301,38 +319,44 @@ export function mapRawEnvToAppConfig(raw: RawEnv): AppConfig {
         maxInputChars: raw.AGENT_MAX_INPUT_CHARS,
       },
     },
-    weather: {
-      defaultProviderId: raw.WEATHER_PROVIDER,
-      fallbackProviderIds: raw.WEATHER_FALLBACK_PROVIDERS,
-      providers: weatherProviders,
-      defaults: {
-        units: raw.WEATHER_DEFAULT_UNITS,
-        forecastDays: raw.WEATHER_DEFAULT_FORECAST_DAYS,
-        maxForecastDays: raw.WEATHER_MAX_FORECAST_DAYS,
-        geocodeLimit: raw.WEATHER_GEOCODE_LIMIT,
-        locale: raw.WEATHER_LOCALE,
+    search: {
+      mode: raw.SEARCH_MODE,
+      native: {
+        toolIdByProvider: raw.SEARCH_NATIVE_TOOL_IDS ?? {},
+        maxUses: raw.SEARCH_MAX_USES,
+        allowedDomains: raw.SEARCH_ALLOWED_DOMAINS.length > 0 ? raw.SEARCH_ALLOWED_DOMAINS : undefined,
+        blockedDomains: raw.SEARCH_BLOCKED_DOMAINS.length > 0 ? raw.SEARCH_BLOCKED_DOMAINS : undefined,
+        userLocation: raw.SEARCH_USER_LOCATION,
       },
+      external:
+        raw.SEARCH_MODE === "external"
+          ? {
+              clientId: raw.SEARCH_CLIENT,
+              apiKey: raw.SEARCH_API_KEY ?? "",
+              baseUrl: raw.SEARCH_BASE_URL,
+              maxResults: raw.SEARCH_MAX_RESULTS,
+              timeoutMs: raw.SEARCH_TIMEOUT_MS,
+              cacheTtlMs: raw.SEARCH_CACHE_TTL_MS,
+            }
+          : undefined,
     },
     cache: {
       enabled: raw.CACHE_ENABLED,
       maxEntries: raw.CACHE_MAX_ENTRIES,
-      ttlMs,
     },
     rateLimit: {
-      chat: {
-        windowMs: raw.RATE_LIMIT_CHAT_WINDOW_MS,
-        max: raw.RATE_LIMIT_CHAT_MAX,
-      },
-      read: {
-        windowMs: raw.RATE_LIMIT_READ_WINDOW_MS,
-        max: raw.RATE_LIMIT_READ_MAX,
-      },
+      chat: { windowMs: raw.RATE_LIMIT_CHAT_WINDOW_MS, max: raw.RATE_LIMIT_CHAT_MAX },
+      read: { windowMs: raw.RATE_LIMIT_READ_WINDOW_MS, max: raw.RATE_LIMIT_READ_MAX },
     },
     observability: {
       logLevel: raw.LOG_LEVEL,
       telemetryEnabled: raw.TELEMETRY_ENABLED,
       serviceName: raw.SERVICE_NAME,
     },
-    features: raw.FEATURE_FLAGS || {},
+    chat: {
+      suggestions: raw.CHAT_SUGGESTIONS,
+      defaultLocale: raw.CHAT_DEFAULT_LOCALE,
+    },
+    features: raw.FEATURE_FLAGS ?? {},
   };
 }
