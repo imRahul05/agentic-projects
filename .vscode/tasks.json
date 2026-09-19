@@ -2,32 +2,43 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "client",
+            "label": "Run Frontend",
             "type": "shell",
-            "command": "pnpm run dev",
+            "command": "source ~/.nvm/nvm.sh && nvm use 22 && [ ! -d node_modules ] && echo 'Installing frontend deps...' && npm install || echo 'Frontend deps already installed'; npm run dev",
             "options": {
                 "cwd": "${workspaceFolder}/client"
             },
-            "isBackground": true,
-            "problemMatcher": []
+            "problemMatcher": [],
+            "presentation": {
+                "panel": "new",
+                "group": "dev"
+            }
         },
         {
-            "label": "server",
+            "label": "Run Backend",
             "type": "shell",
-            "command": "npm run dev",
+            "command": "source ~/.nvm/nvm.sh && nvm use 22 && [ ! -d node_modules ] && echo 'Installing backend deps...' && npm install || echo 'Backend deps already installed'; npm run dev",
             "options": {
                 "cwd": "${workspaceFolder}/server"
             },
-            "isBackground": true,
-            "problemMatcher": []
+            "problemMatcher": [],
+            "presentation": {
+                "panel": "new",
+                "group": "dev"
+            }
         },
         {
-            "label": "dev",
+            "label": "Run Full App",
             "dependsOn": [
-                "client",
-                "server"
+                "Run Frontend",
+                "Run Backend"
             ],
-            "dependsOrder": "parallel"
+            "dependsOrder": "parallel",
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
         }
     ]
 }
