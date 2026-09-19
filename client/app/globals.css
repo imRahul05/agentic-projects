@@ -49,6 +49,9 @@
 }
 
 :root {
+  /* `@theme inline` maps --font-sans straight through, so it has to resolve to
+     the next/font variable declared in app/layout.tsx. */
+  --font-sans: var(--font-geist-sans);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);

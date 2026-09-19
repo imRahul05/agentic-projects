@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Weather Agent — client
 
-## Getting Started
+Next.js 16 (App Router) chat UI for the weather agent. One page, one stream, one
+cached query.
 
-First, run the development server:
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+cp .env.example .env.local   # then point NEXT_PUBLIC_API_BASE_URL at the API
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+`NEXT_PUBLIC_API_BASE_URL` is required and has no fallback — the app surfaces a
+configuration error rather than guessing an origin. It is inlined at build time,
+so a change needs a rebuild.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Start the Express API in `../server` first; the client calls it directly (no dev
+proxy, so the SSE stream is not buffered by Next).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Layout
 
-## Learn More
+| Path | Role |
+| --- | --- |
+| `app/` | Server shell: metadata, fonts, theme bootstrap, `Providers`. |
+| `components/chat/` | The whole chat experience. `chat-panel.tsx` is the one client boundary. |
+| `components/ui/` | shadcn `base-nova` primitives on Base UI. |
+| `lib/api/` | `http.ts` (typed fetch + `ApiError`), `endpoints.ts` (every path). |
+| `lib/chat/` | `useChat` transport and the `useWeatherChat` hook. |
+| `lib/contracts/` | Client mirrors of the server's message and capabilities shapes. |
+| `lib/queries/` | TanStack Query — capabilities only. The stream is owned by `useChat`. |
 
-To learn more about Next.js, take a look at the following resources:
+## Conventions
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- Tailwind v4, CSS-first. Tokens live in `app/globals.css`; there is no
+  `tailwind.config`.
+- `cn` comes from the `cn` package, variants from `class-variance-authority`.
+- Imports use the `@/*` alias and carry no file extension.
+- Nothing in the UI hardcodes a model name, a suggested prompt, a limit or an
+  origin — all of it comes from `/api/capabilities` or the environment.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Checks
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npx tsc --noEmit
+npx next build
+npx eslint .
+```
