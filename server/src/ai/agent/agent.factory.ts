@@ -6,7 +6,7 @@ import type { ModelResolver, ResolvedModel } from "../provider/model-resolver.js
 import type { SearchToolFactory } from "../search/search-tool.factory.js";
 import type { WeatherAgent } from "./agent.types.js";
 import { renderInstructions } from "./instructions.js";
-import { createAgentPolicies } from "./policies.js";
+import { createAgentPolicies, createReasoningProviderOptions } from "./policies.js";
 
 export interface AgentDeps {
   modelResolver: ModelResolver;
@@ -51,12 +51,17 @@ export function createWeatherAgent(deps: AgentDeps, req: AgentRequest): CreatedA
     maxSteps: deps.agentConfig.maxSteps,
   });
 
+  // Asks the provider to emit its reasoning; the SDK already forwards reasoning
+  // parts to the client, so this is what makes the "thinking" UI have content.
+  const providerOptions = createReasoningProviderOptions(resolved.providerId);
+
   const agent = new ToolLoopAgent({
     model: resolved.model,
     instructions,
     tools,
     stopWhen: [...policies.stopWhen],
     maxOutputTokens: policies.maxOutputTokens,
+    ...(providerOptions === undefined ? {} : { providerOptions }),
   });
 
   return { agent, resolved };

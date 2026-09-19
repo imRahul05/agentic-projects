@@ -23,7 +23,7 @@ const HISTORY_WINDOW = 4;
 
 const baseConfig: AppConfig = loadConfig({
   NODE_ENV: "test",
-  ANTHROPIC_API_KEY: "anthropic-test-key",
+  OPENAI_API_KEY: "openai-test-key",
 });
 
 /**

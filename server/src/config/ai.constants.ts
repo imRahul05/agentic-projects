@@ -91,6 +91,32 @@ export const SEARCH_DEFAULTS = {
   cacheTtlMs: 300_000,
 } as const;
 
+/**
+ * Reasoning ("thinking") output.
+ *
+ * The AI SDK streams reasoning parts to the client by default, but a provider
+ * only emits them if asked. OpenAI's reasoning models return a summary when
+ * `reasoningSummary` is set; every model in the catalog is a reasoning model,
+ * so this is on.
+ *
+ * Anthropic extended thinking is off by default on purpose: it requires a token
+ * budget below maxOutputTokens and constrains other call settings, so it is
+ * opt-in rather than a surprise at the first Claude request.
+ */
+export const REASONING_DEFAULTS = {
+  openai: {
+    enabled: true,
+    /** "auto" | "concise" | "detailed" */
+    summary: "auto",
+    /** Left undefined so the provider's own default applies. */
+    effort: undefined as "low" | "medium" | "high" | undefined,
+  },
+  anthropic: {
+    enabled: false,
+    budgetTokens: 2_048,
+  },
+} as const;
+
 /** Chat surface copy, served through /api/capabilities so the client hardcodes nothing. */
 export const CHAT_DEFAULTS = {
   defaultLocale: "en-US",

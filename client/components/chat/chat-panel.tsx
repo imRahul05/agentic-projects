@@ -1,15 +1,17 @@
 "use client";
 
-import { ArrowDown, CloudSun, Globe } from "lucide-react";
+import { CloudSun, Globe } from "lucide-react";
 import { useEffect } from "react";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationScrollButton,
+} from "@/components/ai-elements/conversation";
+import { ChatComposer } from "@/components/chat/chat-composer";
 import { ChatStatus } from "@/components/chat/chat-status";
 import { MessageList } from "@/components/chat/message-list";
-import { ModelPicker } from "@/components/chat/model-picker";
-import { PromptInput } from "@/components/chat/prompt-input";
 import { Suggestions } from "@/components/chat/suggestions";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useStickToBottom } from "@/hooks/use-stick-to-bottom";
 import { getApiBaseUrl, missingApiBaseUrlMessage } from "@/lib/api/http";
 import { useWeatherChat } from "@/lib/chat/use-weather-chat";
 import { useCapabilitiesQuery } from "@/lib/queries/capabilities.query";
@@ -48,7 +50,7 @@ function EmptyState({
   return (
     // `my-auto` centres the empty state in the viewport; once a message exists
     // the transcript is taller than the container and this never applies.
-    <div className="my-auto flex flex-col gap-6 py-6">
+    <div className="my-auto flex min-w-0 flex-col gap-6 py-6">
       <div className="flex flex-col gap-2.5">
         <span
           className="flex size-10 items-center justify-center rounded-xl border border-border bg-card text-foreground"
@@ -91,88 +93,64 @@ export function ChatPanel() {
       : { defaultLocale: capabilities.defaultLocale }),
   });
 
-  const { viewportRef, contentRef, isPinned, scrollToBottom } = useStickToBottom();
-
   const isEmpty = chat.messages.length === 0;
   const searchMode = capabilities?.search.mode;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="shrink-0 border-b border-border">
-        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-4 py-2.5">
-          <div className="flex min-w-0 items-center gap-2">
-            <CloudSun className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-            <span className="truncate text-sm font-semibold tracking-tight">Weather Agent</span>
-            {searchMode === undefined ? null : (
-              <span className="hidden shrink-0 items-center gap-1 rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[0.625rem] font-medium text-muted-foreground sm:inline-flex">
-                <Globe className="size-2.5" aria-hidden="true" />
-                {searchMode}
-              </span>
-            )}
-          </div>
-
-          <ModelPicker
-            models={capabilities?.models ?? []}
-            value={chat.modelAlias}
-            disabled={chat.isBusy}
-            onChange={chat.setModelAlias}
-          />
+        <div className="mx-auto flex w-full max-w-3xl items-center gap-2 px-4 py-2.5">
+          <CloudSun className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+          <span className="truncate text-sm font-semibold tracking-tight">Weather Agent</span>
+          {searchMode === undefined ? null : (
+            <span className="hidden shrink-0 items-center gap-1 rounded-full border border-border bg-muted/60 px-2 py-0.5 text-[0.625rem] font-medium text-muted-foreground sm:inline-flex">
+              <Globe className="size-2.5" aria-hidden="true" />
+              {searchMode}
+            </span>
+          )}
         </div>
       </header>
 
       {isConfigured ? null : <ConfigurationBanner />}
 
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          ref={viewportRef}
-          className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
-          tabIndex={-1}
-        >
-          <div
-            ref={contentRef}
-            className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-4 px-4 py-4"
-          >
-            {isEmpty ? (
-              <EmptyState
-                suggestions={capabilities?.suggestions ?? []}
-                isLoadingCapabilities={capabilitiesQuery.isPending && isConfigured}
-                disabled={chat.isBusy}
-                onSelect={chat.send}
-              />
-            ) : (
-              <MessageList messages={chat.messages} isStreaming={chat.isStreaming} />
-            )}
-
-            <ChatStatus
-              status={chat.status}
-              error={chat.error ?? (isEmpty ? (capabilitiesQuery.error ?? undefined) : undefined)}
-              aborted={chat.aborted}
-              onRetry={isEmpty ? () => void capabilitiesQuery.refetch() : chat.regenerate}
-              onDismissError={chat.clearError}
+      {/*
+        ai-elements' `Conversation` wraps `use-stick-to-bottom`: it follows the
+        stream while the reader is at the bottom, gets out of the way the moment
+        they scroll up, and `ConversationScrollButton` only appears in that case.
+      */}
+      <Conversation className="min-h-0 flex-1 overflow-y-hidden" role="presentation">
+        <ConversationContent className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-4 p-4">
+          {isEmpty ? (
+            <EmptyState
+              suggestions={capabilities?.suggestions ?? []}
+              isLoadingCapabilities={capabilitiesQuery.isPending && isConfigured}
+              disabled={chat.isBusy}
+              onSelect={chat.send}
             />
-          </div>
-        </div>
+          ) : (
+            <MessageList messages={chat.messages} isStreaming={chat.isStreaming} />
+          )}
 
-        {isPinned || isEmpty ? null : (
-          <Button
-            type="button"
-            variant="outline"
-            size="icon-sm"
-            onClick={() => {
-              scrollToBottom();
-            }}
-            aria-label="Jump to the latest message"
-            className="absolute inset-x-0 bottom-3 mx-auto w-fit rounded-full shadow-md"
-          >
-            <ArrowDown aria-hidden="true" />
-          </Button>
-        )}
-      </div>
+          <ChatStatus
+            status={chat.status}
+            error={chat.error ?? (isEmpty ? (capabilitiesQuery.error ?? undefined) : undefined)}
+            aborted={chat.aborted}
+            onRetry={isEmpty ? () => void capabilitiesQuery.refetch() : chat.regenerate}
+            onDismissError={chat.clearError}
+          />
+        </ConversationContent>
+
+        <ConversationScrollButton aria-label="Jump to the latest message" />
+      </Conversation>
 
       <div className="shrink-0 border-t border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
         <div className="mx-auto w-full max-w-3xl px-4 pt-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))]">
-          <PromptInput
+          <ChatComposer
+            status={chat.status}
             isBusy={chat.isBusy}
+            models={capabilities?.models ?? []}
+            modelAlias={chat.modelAlias}
+            onModelChange={chat.setModelAlias}
             {...(capabilities?.limits.maxInputChars === undefined
               ? {}
               : { maxChars: capabilities.limits.maxInputChars })}

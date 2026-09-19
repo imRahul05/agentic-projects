@@ -8,12 +8,7 @@ import {
   SEARCH_DEFAULTS,
   type ProviderId,
 } from "./ai.constants.js";
-import {
-  CLIENT_SELECTABLE_ALIASES,
-  DEFAULT_MODEL_ALIAS,
-  getModelCatalog,
-  validateModelCatalog,
-} from "./ai-models.config.js";
+import { DEFAULT_MODEL, getModelCatalog, providerForModel, validateModelCatalog } from "./ai-models.config.js";
 
 /**
  * The environment carries secrets and deployment-specific infrastructure only.
@@ -139,15 +134,23 @@ export const rawEnvSchema = baseEnvSchema.superRefine((raw, ctx) => {
     });
   }
 
-  // An alias is only usable if its provider has credentials in this environment.
-  for (const [alias, spec] of Object.entries(getModelCatalog())) {
-    if (!configuredProviders.has(spec.provider as ProviderId)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["MODEL_CATALOG", alias],
-        message: `alias "${alias}" needs provider "${spec.provider}", which has no API key configured`,
-      });
-    }
+  // Models whose provider has no key are simply not offered. Only the default
+  // model being unreachable is fatal, because every request falls back to it.
+  const defaultProvider = providerForModel(DEFAULT_MODEL);
+  if (defaultProvider !== undefined && !configuredProviders.has(defaultProvider)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["DEFAULT_MODEL"],
+      message: `default model "${DEFAULT_MODEL}" needs provider "${defaultProvider}", so ${defaultProvider.toUpperCase()}_API_KEY must be set`,
+    });
+  }
+
+  if (configuredProviders.size > 0 && Object.keys(getModelCatalog(configuredProviders)).length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["MODELS"],
+      message: "no declared model belongs to a provider that has an API key configured",
+    });
   }
 
   if (SEARCH_DEFAULTS.mode === "native") {
@@ -183,12 +186,17 @@ export type RawEnv = z.infer<typeof rawEnvSchema>;
 
 export function mapRawEnvToAppConfig(raw: RawEnv): AppConfig {
   const providers: Record<string, { apiKey: string; baseURL?: string }> = {};
+  const credentialedProviders = new Set<ProviderId>();
   if (raw.OPENAI_API_KEY) {
     providers[PROVIDER_IDS.openai] = { apiKey: raw.OPENAI_API_KEY, baseURL: raw.OPENAI_BASE_URL };
+    credentialedProviders.add(PROVIDER_IDS.openai);
   }
   if (raw.ANTHROPIC_API_KEY) {
     providers[PROVIDER_IDS.anthropic] = { apiKey: raw.ANTHROPIC_API_KEY, baseURL: raw.ANTHROPIC_BASE_URL };
+    credentialedProviders.add(PROVIDER_IDS.anthropic);
   }
+
+  const catalog = getModelCatalog(credentialedProviders);
 
   const searchMode: SearchMode = SEARCH_DEFAULTS.mode;
 
@@ -204,9 +212,10 @@ export function mapRawEnvToAppConfig(raw: RawEnv): AppConfig {
     },
     ai: {
       providers,
-      modelAliases: getModelCatalog(),
-      defaultAlias: DEFAULT_MODEL_ALIAS,
-      clientSelectableAliases: CLIENT_SELECTABLE_ALIASES,
+      modelAliases: catalog,
+      defaultAlias: DEFAULT_MODEL,
+      // Every model the environment can actually reach is offered to the client.
+      clientSelectableAliases: Object.keys(catalog),
       agent: {
         maxSteps: AGENT_DEFAULTS.maxSteps,
         maxSearches: AGENT_DEFAULTS.maxSearches,
