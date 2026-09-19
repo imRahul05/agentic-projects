@@ -174,6 +174,18 @@ export const PromptInput = ({ className, onSubmit, children, ...props }: PromptI
 
 export type PromptInputBodyProps = HTMLAttributes<HTMLDivElement>;
 
+/**
+ * Do NOT wrap the textarea and footer in this.
+ *
+ * `InputGroup` only becomes a column via `has-[>[data-align=block-end]]:flex-col`,
+ * a direct-child selector. `display: contents` changes how a box renders but not
+ * the DOM tree, so wrapping the footer here makes it a grandchild, the selector
+ * stops matching, the group stays a row, and the `flex-1` textarea collapses to
+ * a sliver beside the footer.
+ *
+ * Pass the textarea and footer straight to `PromptInput`. This is kept only for
+ * parity with the upstream registry component.
+ */
 export const PromptInputBody = ({ className, ...props }: PromptInputBodyProps) => (
   <div className={cn("contents", className)} {...props} />
 );

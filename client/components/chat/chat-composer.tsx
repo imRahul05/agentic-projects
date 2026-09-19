@@ -4,7 +4,6 @@ import type { ChatStatus } from "ai";
 import { useCallback, useId } from "react";
 import {
   PromptInput,
-  PromptInputBody,
   PromptInputFooter,
   PromptInputProvider,
   PromptInputSubmit,
@@ -73,22 +72,24 @@ function ComposerForm({
     [onSend]
   );
 
+  // The textarea and footer are direct children on purpose: InputGroup switches
+  // to a column via a direct-child selector, so any wrapper here — even one
+  // using `display: contents` — leaves it a row and collapses the textarea.
   return (
     <PromptInput onSubmit={handleSubmit}>
-      <PromptInputBody>
-        <label className="sr-only" htmlFor="prompt-input">
-          Ask about the weather
-        </label>
-        <PromptInputTextarea
-          id="prompt-input"
-          aria-describedby={maxChars === undefined ? undefined : counterId}
-          aria-invalid={overLimit}
-          autoComplete="off"
-          disabled={isBusy}
-          placeholder={isBusy ? "Waiting for the agent…" : "Ask about the weather anywhere…"}
-        />
+      <label className="sr-only" htmlFor="prompt-input">
+        Ask about the weather
+      </label>
+      <PromptInputTextarea
+        id="prompt-input"
+        aria-describedby={maxChars === undefined ? undefined : counterId}
+        aria-invalid={overLimit}
+        autoComplete="off"
+        disabled={isBusy}
+        placeholder={isBusy ? "Waiting for the agent…" : "Ask about the weather anywhere…"}
+      />
 
-        <PromptInputFooter>
+      <PromptInputFooter>
           <PromptInputTools>
             <ModelSelect
               models={models}
@@ -119,15 +120,14 @@ function ComposerForm({
                 {length} / {maxChars}
               </p>
             )}
-            <PromptInputSubmit
-              disabled={!(canSend || isBusy)}
-              size="icon-sm"
-              status={status}
-              onStop={onStop}
-            />
-          </div>
-        </PromptInputFooter>
-      </PromptInputBody>
+          <PromptInputSubmit
+            disabled={!(canSend || isBusy)}
+            size="icon-sm"
+            status={status}
+            onStop={onStop}
+          />
+        </div>
+      </PromptInputFooter>
     </PromptInput>
   );
 }
