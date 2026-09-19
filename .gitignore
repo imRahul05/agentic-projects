@@ -43,7 +43,7 @@ yarn-error.log*
 next-env.d.ts
 
 # dependencies (any depth — root pattern above is anchored)
-node_modules/
+node_modules
 .pnpm-store/
 
 # claude worktrees
