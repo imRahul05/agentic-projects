@@ -16,7 +16,7 @@ const PROVIDER_SECRET = "anthropic-test-key";
 
 const testEnv: Readonly<Record<string, string>> = {
   NODE_ENV: "test",
-  ANTHROPIC_API_KEY: PROVIDER_SECRET,
+  OPENAI_API_KEY: PROVIDER_SECRET,
   AI_MODEL_ALIASES: JSON.stringify({
     default: { provider: "anthropic", model: "test-model-a", label: "Balanced", description: "d" },
   }),
@@ -132,7 +132,7 @@ describe("createApp", () => {
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
       status: "ready",
-      providers: ["anthropic"],
+      providers: ["openai"],
       search: { mode: "native", ok: true },
     });
   });
