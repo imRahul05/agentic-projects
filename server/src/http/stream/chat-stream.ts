@@ -104,6 +104,10 @@ export function createChatStream(deps: ChatStreamDeps): ChatStreamHandler {
         // client UI renders citations for every provider despite their native
         // web-search tools returning entirely different output shapes.
         sendSources: true,
+        // Defaults to true, but stated explicitly: the chain-of-thought UI is
+        // built on these parts, and silently losing them would look like the
+        // model simply stopped thinking.
+        sendReasoning: true,
         messageMetadata: (): ChatMessageMetadata => metadata(),
         onStepEnd: (step): void => {
           // One agent, one tool: every tool call is a search.
