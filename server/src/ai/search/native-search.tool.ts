@@ -3,9 +3,10 @@ import type { OpenAIProvider } from "@ai-sdk/openai";
 import type { NativeSearchConfig, SearchUserLocation } from "../../config/config.types.js";
 import { AppError } from "../../platform/errors/app-error.js";
 import { PROVIDER_ANTHROPIC, PROVIDER_OPENAI, type LlmProvider } from "../provider/provider-registry.js";
+import { WEB_SEARCH_TOOL_NAME } from "../../config/ai.constants.js";
 
-/** The single tool name the agent, the prompt and the client all agree on. */
-export const WEB_SEARCH_TOOL_NAME = "web_search";
+/** Declared once in `config/ai.constants.ts`; re-exported for this layer's importers. */
+export { WEB_SEARCH_TOOL_NAME };
 
 type AnthropicWebSearchFactory = AnthropicProvider["tools"]["webSearch_20250305"];
 type AnthropicWebSearchArgs = NonNullable<Parameters<AnthropicWebSearchFactory>[0]>;

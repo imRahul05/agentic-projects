@@ -3,13 +3,16 @@ import { createOpenAI, type OpenAIProvider, type OpenAIProviderSettings } from "
 import { createProviderRegistry } from "ai";
 import type { AiConfig, ProviderCredentials } from "../../config/config.types.js";
 import { AppError } from "../../platform/errors/app-error.js";
+import { PROVIDER_IDS, REGISTRY_SEPARATOR } from "../../config/ai.constants.js";
 
-/** Provider keys are the one identity allowed to appear literally in this layer. */
-export const PROVIDER_OPENAI = "openai";
-export const PROVIDER_ANTHROPIC = "anthropic";
-
-/** Separator between provider key and model id inside a registry reference. */
-export const REGISTRY_SEPARATOR = ":";
+/**
+ * Provider identity and the registry separator are declared once, in
+ * `config/ai.constants.ts`. They are re-exported here so existing importers in
+ * this layer keep a single, obvious source.
+ */
+export const PROVIDER_OPENAI = PROVIDER_IDS.openai;
+export const PROVIDER_ANTHROPIC = PROVIDER_IDS.anthropic;
+export { REGISTRY_SEPARATOR };
 
 /** `ai` does not re-export `FetchFunction`, so it is derived from a provider's settings. */
 export type FetchFunction = NonNullable<OpenAIProviderSettings["fetch"]>;

@@ -21,17 +21,27 @@ const ANSWER = "It is 18 degrees and clear in Lisbon.";
 const SOURCE_URL = "https://weather.example.test/lisbon";
 const HISTORY_WINDOW = 4;
 
-const config: AppConfig = loadConfig({
+const baseConfig: AppConfig = loadConfig({
   NODE_ENV: "test",
   ANTHROPIC_API_KEY: "anthropic-test-key",
-  AI_MODEL_ALIASES: JSON.stringify({
-    default: { provider: "anthropic", model: "test-model-a", label: "Balanced" },
-  }),
-  AI_DEFAULT_MODEL_ALIAS: "default",
-  SEARCH_NATIVE_TOOL_IDS: JSON.stringify({ anthropic: "webSearch_test" }),
-  AGENT_HISTORY_WINDOW: String(HISTORY_WINDOW),
-  AGENT_MAX_INPUT_CHARS: "20000",
 });
+
+/**
+ * Agent budgets now live in `config/ai.constants.ts` rather than the
+ * environment, so a test that needs a different window overrides the loaded
+ * config directly instead of reaching for an env var.
+ */
+const config: AppConfig = {
+  ...baseConfig,
+  ai: {
+    ...baseConfig.ai,
+    agent: {
+      ...baseConfig.ai.agent,
+      historyWindowMessages: HISTORY_WINDOW,
+      maxInputChars: 20_000,
+    },
+  },
+};
 
 const externalSearch: ExternalSearchConfig = {
   clientId: "fixture-client",
